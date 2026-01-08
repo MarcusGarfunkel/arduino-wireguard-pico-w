@@ -1,6 +1,6 @@
 # WireGuard-Raspberry Pi Pico W / RP2040 (port of Wireguard-ESP32)
 
-This library is a **port** of the original **WireGuard-ESP32** project to **Raspberry Pi Pico W (RP2040 + CYW43)** using the **Arduino-Pico (Earle Philhower) core** and **lwIP**.
+This library is a **port** of the original **WireGuard-ESP32** project to **Raspberry Pi Pico(2) W (RP2040/2350 + CYW43)** using the **Arduino-Pico (Earle Philhower) core** and **lwIP**.
 
 The goal of the port is to keep the original API as intact as possible, while replacing ESP-IDF / ESP32-specific dependencies with a small Pico W compatibility layer.
 
