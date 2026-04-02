@@ -1031,7 +1031,7 @@ bool wireguard_base64_decode(const char *str, uint8_t *out, size_t *outlen) {
 	uint8_t bits;
 	char c;
 	char *ptr;
-	int x;
+	size_t x;
 	size_t inlen;
 
 	if (!str) {
@@ -1071,7 +1071,7 @@ bool wireguard_base64_decode(const char *str, uint8_t *out, size_t *outlen) {
 		char_count++;
 
 		if (char_count == 4) {
-			if (len + byte_count > *outlen) {
+			if ((size_t)(len + byte_count) > *outlen) {
 				// Output buffer overflow
 				result = false;
 				break;
@@ -1097,8 +1097,8 @@ bool wireguard_base64_decode(const char *str, uint8_t *out, size_t *outlen) {
 
 bool wireguard_base64_encode(const uint8_t *in, size_t inlen, char *out, size_t *outlen) {
 	bool result = false;
-	int read_offset = 0;
-	int write_offset = 0;
+	size_t read_offset = 0;
+	size_t write_offset = 0;
 	uint8_t byte1, byte2, byte3;
 	uint32_t tmp;
 	char c;
@@ -1117,9 +1117,9 @@ bool wireguard_base64_encode(const uint8_t *in, size_t inlen, char *out, size_t 
 			// Write out 4 characters each representing 6 bits of input
 			out[write_offset++] = base64_lookup[(tmp >> 18) & 0x3F];
 			out[write_offset++] = base64_lookup[(tmp >> 12) & 0x3F];
-			c = (write_offset < len - padding) ? base64_lookup[(tmp >> 6) & 0x3F] : '=';
+			c = (write_offset < len - (size_t)padding) ? base64_lookup[(tmp >> 6) & 0x3F] : '=';
 			out[write_offset++] = c;
-			c = (write_offset < len - padding) ? base64_lookup[(tmp) & 0x3F] : '=';
+			c = (write_offset < len - (size_t)padding) ? base64_lookup[(tmp) & 0x3F] : '=';
 			out[write_offset++] = c;
 		}
 		out[len] = '\0';

@@ -33,7 +33,6 @@ struct wireguard_handshake;
 #define PRINTABLE_BUFFER_SIZE 512
 #endif
 
-NOINIT static char deb_buffer[PRINTABLE_BUFFER_SIZE];
 
 #ifdef __cplusplus
 extern "C" {

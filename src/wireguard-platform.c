@@ -20,7 +20,7 @@
 
 static bool is_platform_initialized = false;
 
-static void secure_bzero(void *p, size_t n) {
+static void __attribute__((unused)) secure_bzero(void *p, size_t n) {
   volatile uint8_t *vp = (volatile uint8_t *)p;
   while (n--) *vp++ = 0;
 }

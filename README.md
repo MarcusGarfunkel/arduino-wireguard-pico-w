@@ -40,16 +40,13 @@ static const char* WIFI_PASS = "your-pass";
 
 // WireGuard keys (base64 strings, like in wg-quick)
 static const char* WG_PRIVATE_KEY = "YOUR_PRIVATE_KEY_BASE64";
-static const char* WG_PEER_PUBLIC_KEY = "SERVER_PUBLIC_KEY_BASE64";
+static const char* WG_SERVER_PUBLIC_KEY = "SERVER_PUBLIC_KEY_BASE64";
 
 // Example configuration:
 // - local tunnel address: 10.8.0.50
 // - endpoint: 203.0.113.10:10000
 // - allowed IPs: 0.0.0.0/0 (full tunnel) or only your LAN/VPN ranges
 static const IPAddress WG_LOCAL_IP(10, 8, 0, 50);
-static const IPAddress WG_LOCAL_GW(0, 0, 0, 0);
-static const IPAddress WG_LOCAL_MASK(255, 255, 255, 0);
-
 static const char* WG_ENDPOINT = "wireguard IP address";
 static const uint16_t  WG_ENDPOINT_PORT = 10000;
 
@@ -99,6 +96,7 @@ void setup() {
     Serial.printf("NTP sync failed. check WiFi/DNS/UDP 123.\n");
   }
 
+  // beginAdvanced(...) = split tunnel (only WG_ALLOWED_IP/WG_ALLOWED_MASK through WG)
   if (!wg.beginAdvanced(
         WG_LOCAL_IP,
         WG_PRIVATE_KEY,
@@ -121,6 +119,22 @@ void loop() {
   // Your application code here.
 }
 ```
+
+## API summary
+
+- `begin(localIP, privateKey, remotePeerAddress, remotePeerPublicKey, remotePeerPort)`
+  - Backward-compatible mode.
+  - Uses full-tunnel routing (`AllowedIPs = 0.0.0.0/0`).
+
+- `beginAdvanced(localIP, privateKey, remotePeerAddress, remotePeerPublicKey, remotePeerPort, allowedIp, allowedMask)`
+  - Split-tunnel mode.
+  - Routes only `allowedIp/allowedMask` through WireGuard.
+
+- `peerUp(...)`
+  - Returns `true` when a valid session key exists.
+
+- `kickHandshake(probeIp, probePort, minIntervalMs)`
+  - Sends a tiny UDP probe to trigger handshake in a non-blocking way.
 
 ## Notes / limitations
 

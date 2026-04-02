@@ -1,5 +1,7 @@
 #include "wg_port_pico.h"
 
+NOINIT static char deb_buffer[PRINTABLE_BUFFER_SIZE];
+
 // Format using va_list
 static void vdeb(const char *fmt, va_list ap) {
   // NOTE: This is not thread-safe / not multi-core safe.
