@@ -1,13 +1,13 @@
-# WireGuard-ESP32 (Raspberry Pi Pico W / RP2040 port)
+# WireGuard-Raspberry Pi Pico W / RP2040 (2350) (port of Wireguard-ESP32)
 
-This library is a **port** of the original **WireGuard-ESP32** project to **Raspberry Pi Pico W (RP2040 + CYW43)** using the **Arduino-Pico (Earle Philhower) core** and **lwIP**.
+This library is a **port** of the original **WireGuard-ESP32** project to **Raspberry Pi Pico(2) W (RP2040/2350 + CYW43)** using the **Arduino-Pico (Earle Philhower) core** and **lwIP**.
 
 The goal of the port is to keep the original API as intact as possible, while replacing ESP-IDF / ESP32-specific dependencies with a small Pico W compatibility layer.
 
 ## Credits
 
 - Original project / API: the WireGuard-ESP32 library and its upstream dependencies (see `LICENSE`).
-- Pico W / RP2040 port: **Marcin Kielesiński** (this repository).
+- Pico(2) W / RP2040 / 2350 port: **Marcin Kielesiński** (this repository).
 
 ## What changed in this port (high level)
 
@@ -21,16 +21,17 @@ The original library targets ESP32 and depends on ESP-IDF pieces. For Pico W (Ar
 
 ## Requirements
 
-- Raspberry Pi Pico W (RP2040)
+- Raspberry Pi Pico(2) W (RP2040 / 2350)
 - Arduino IDE / Arduino CLI
-- Arduino-Pico core (Earle Philhower), board: `rp2040:rp2040:rpipicow`
+- Arduino-Pico core (Earle Philhower)
 - WiFi enabled (CYW43)
-- IPv4 networking (WireGuard endpoint by IP is supported)
+- IPv4 networking (WireGuard endpoint by IPv4 literal or hostname is supported)
 
 ## Usage (example)
 
 ```cpp
 #include <WiFi.h>
+#include <time.h>
 #include "arduino-wireguard-pico-w.h"
 
 WireGuard wg;
@@ -130,6 +131,12 @@ void loop() {
   - Split-tunnel mode.
   - Routes only `allowedIp/allowedMask` through WireGuard.
 
+- `end()`
+  - Removes WireGuard peer/interface and restores previous default netif.
+
+- `is_initialized()`
+  - Returns whether WireGuard interface setup has completed.
+
 - `peerUp(...)`
   - Returns `true` when a valid session key exists.
 
@@ -138,7 +145,7 @@ void loop() {
 
 ## Notes / limitations
 
-- This port is currently focused on **Pico W + lwIP**. Other RP2040 network stacks are not covered.
+- This port is currently focused on **Pico(2) W + lwIP**. Other RP2040/2350 network stacks are not covered.
 - The netif mapping assumes a **single active WiFi STA interface** (typical for Pico W).
 - If you run multiple netifs or unusual routing, you may need to adjust the `tcpip_adapter_get_netif()` shim.
 - WireGuard does not “connect” like TCP; the handshake typically starts when the stack needs to send traffic. Test by sending UDP/TCP traffic through the tunnel to an allowed destination.
