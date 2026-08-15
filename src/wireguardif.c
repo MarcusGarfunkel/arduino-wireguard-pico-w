@@ -91,13 +91,20 @@ static err_t wireguardif_peer_output(struct netif *netif, struct pbuf *q, struct
     
     char ip_str[16];
     ipaddr_ntoa_r(&peer->ip, ip_str, sizeof(ip_str));
-    log_i(TAG "SENDING to %s:%d, size: %d bytes", ip_str, peer->port, q->tot_len);
-    
+    // MezMirage: demoted from log_i -- fires on every single outbound packet
+    // (handshake, keepalive, and every transport-data segment alike), which
+    // floods the log pipeline hard enough during a sustained transfer to
+    // starve the SD-write path and collapse Core 0's cycle time (hardware-
+    // confirmed: ~9800 [WG] lines in one 4-fetch-cycle run, ~160/s during a
+    // single successful fetch). Matches this file's own existing DEBUG_DEEP
+    // gating pattern elsewhere for similarly per-tick/per-packet chatter.
+    log_d(TAG "SENDING to %s:%d, size: %d bytes", ip_str, peer->port, q->tot_len);
+
     uint8_t *data = (uint8_t *)q->payload;
-    log_i(TAG "Packet type: 0x%02X", data[0]);
-    
+    log_d(TAG "Packet type: 0x%02X", data[0]);
+
     // DEBUG: Sprawdź PCB i netif
-    log_i(TAG "PCB: %p, Underlying netif: %p", device->udp_pcb, device->underlying_netif);
+    log_d(TAG "PCB: %p, Underlying netif: %p", device->udp_pcb, device->underlying_netif);
     
     if (device->udp_pcb == NULL) {
         log_e(TAG "UDP PCB is NULL!");
@@ -111,9 +118,9 @@ static err_t wireguardif_peer_output(struct netif *netif, struct pbuf *q, struct
         return ERR_ARG;
     }
     
-    log_i(TAG "Calling udp_sendto_if...");
+    log_d(TAG "Calling udp_sendto_if...");
     err_t result = udp_sendto_if(device->udp_pcb, q, &peer->ip, peer->port, device->underlying_netif);
-    log_i(TAG "udp_sendto_if returned: %d", result);
+    log_d(TAG "udp_sendto_if returned: %d", result);
     
     // DEBUG: check lwIP errors
     if (result != ERR_OK) {
@@ -591,8 +598,11 @@ void wireguardif_network_rx(void *arg, struct udp_pcb *pcb, struct pbuf *p, cons
 	struct message_cookie_reply *msg_cookie;
 	struct message_transport_data *msg_data;
 
-	log_i(TAG "=== UDP RX START ===");
-	log_i(TAG "RX from %s:%d, len=%d, local port: %d", 
+	// MezMirage: demoted from log_i, same reasoning as wireguardif_peer_output()
+	// above -- fires on every single inbound packet, the dominant contributor
+	// to the log-pipeline flood during a sustained transfer.
+	log_d(TAG "=== UDP RX START ===");
+	log_d(TAG "RX from %s:%d, len=%d, local port: %d",
 				ipaddr_ntoa(addr), port, p->len, pcb->local_port);
 
 	// check if this is a loopback packet
@@ -605,7 +615,7 @@ void wireguardif_network_rx(void *arg, struct udp_pcb *pcb, struct pbuf *p, cons
 	// Log first bytes
 	uint8_t *data = (uint8_t *)p->payload;
 	size_t len = p->len; // This buf, not chained ones
-	log_i(TAG "RX packet type: 0x%02X", data[0]);
+	log_d(TAG "RX packet type: 0x%02X", data[0]);
 
 	uint8_t type = wireguard_get_message_type(data, len);
 	ESP_LOGV(TAG, "network_rx: %08x:%d", WG_IP4_U32(addr), port);
@@ -675,7 +685,7 @@ void wireguardif_network_rx(void *arg, struct udp_pcb *pcb, struct pbuf *p, cons
 	// Release data!
 	pbuf_free(p);
 
-	log_i(TAG "=== UDP RX END ===");
+	log_d(TAG "=== UDP RX END ===");
 }
 
 // static err_t wireguard_start_handshake(struct netif *netif, struct wireguard_peer *peer) {
