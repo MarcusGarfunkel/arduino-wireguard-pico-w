@@ -367,7 +367,15 @@ static void wireguardif_process_data_message(struct wireguard_device *device, st
 							// Also check packet length!
 #if LWIP_IPV4
 							if (IPH_V(iphdr) == 4) {
-								ip_addr_copy_from_ip4(dest, iphdr->dest);
+								// Cryptokey routing must validate the decrypted packet's
+								// SOURCE against the peer's allowed_source_ips -- that's
+								// what stops a peer from injecting traffic claiming to be
+								// from an address it isn't authorized for. This used to
+								// read iphdr->dest (checking where the packet is addressed
+								// TO, not who it's claiming to be FROM), which enforces
+								// nothing about the sender's identity. Matches upstream fix
+								// smartalock/wireguard-lwip#16.
+								ip_addr_copy_from_ip4(dest, iphdr->src);
 								for (x=0; x < WIREGUARD_MAX_SRC_IPS; x++) {
 									if (peer->allowed_source_ips[x].valid) {
 										if (ip_addr_netcmp(&dest, &peer->allowed_source_ips[x].ip, ip_2_ip4(&peer->allowed_source_ips[x].mask))) {

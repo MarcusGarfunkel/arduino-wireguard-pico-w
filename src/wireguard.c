@@ -35,6 +35,7 @@
 
 #include "wireguard.h"
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -325,7 +326,21 @@ bool wireguard_check_replay(struct wireguard_keypair *keypair, uint64_t seq) {
 	// Adapted from code in Appendix C at https://tools.ietf.org/html/rfc2401
 	uint32_t diff;
 	bool result = false;
-	size_t ReplayWindowSize = sizeof(keypair->replay_bitmap); // 32 bits
+	// sizeof() gives bytes (4), but the window-size comparisons below treat
+	// this as a bit count against a 32-bit bitmap -- missing * CHAR_BIT made
+	// the real window 8x narrower than intended (4 sequence numbers instead
+	// of 32), spuriously rejecting/resetting on ordinary UDP reordering.
+	// Matches upstream fix smartalock/wireguard-lwip@63b5865.
+	size_t ReplayWindowSize = sizeof(keypair->replay_bitmap) * CHAR_BIT; // 32 bits
+
+	// WireGuard's transport data counter starts at 0, but this function
+	// treats seq==0 as a sentinel meaning "nothing received yet" (see the
+	// final else branch below) and drops it -- silently discarding the
+	// first real data packet under every fresh keypair (i.e. after every
+	// rekey). Shifting the local copy by one fixes the ambiguity without
+	// affecting the caller, which passes seq by value. Matches upstream fix
+	// smartalock/wireguard-lwip@0c44df3.
+	seq++;
 
 	if (seq != 0) {
 		if (seq > keypair->replay_counter) {
