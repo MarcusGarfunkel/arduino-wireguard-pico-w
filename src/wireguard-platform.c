@@ -16,6 +16,7 @@
 #include <sys/time.h>        // gettimeofday()
 
 #include "pico/rand.h"
+#include "wg_port_pico.h"    // log_d(), routed through this project's LogModule
 
 static bool is_platform_initialized = false;
 
@@ -98,6 +99,7 @@ void wireguard_tai64n_now(uint8_t *output) {
 
 static uint32_t load_window_start_ms = 0;
 static uint32_t load_window_count = 0;
+static bool     load_state_was_under_load = false;  // edge-detect only, for the log_d below
 
 void wireguard_platform_note_handshake_attempt() {
   uint32_t now = wireguard_sys_now();
@@ -110,9 +112,21 @@ void wireguard_platform_note_handshake_attempt() {
 
 bool wireguard_is_under_load() {
   uint32_t now = wireguard_sys_now();
+  bool under_load;
   if ((uint32_t)(now - load_window_start_ms) >= WIREGUARD_LOAD_WINDOW_MS) {
     // Window has aged out with no attempt recorded since -- not under load.
-    return false;
+    under_load = false;
+  } else {
+    under_load = load_window_count > WIREGUARD_LOAD_THRESHOLD;
   }
-  return load_window_count > WIREGUARD_LOAD_THRESHOLD;
+  // Edge-triggered, not per-call, so this can't itself become a per-packet
+  // log flood under real load -- exactly the failure mode this project has
+  // hit before with this library's own logging (see the log_i->log_d commit
+  // this fork already carries).
+  if (under_load != load_state_was_under_load) {
+    log_d(TAG "load state -> %s (count=%lu in window)", under_load ? "UNDER LOAD" : "normal",
+          (unsigned long)load_window_count);
+    load_state_was_under_load = under_load;
+  }
+  return under_load;
 }
