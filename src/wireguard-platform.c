@@ -15,8 +15,7 @@
 #include "crypto.h"          // for U64TO8_BIG / U32TO8_BIG
 #include <sys/time.h>        // gettimeofday()
 
-#include "hardware/regs/rosc.h"
-#include "hardware/regs/addressmap.h"
+#include "pico/rand.h"
 
 static bool is_platform_initialized = false;
 
@@ -31,32 +30,34 @@ void wireguard_platform_init() {
   is_platform_initialized = true;
 }
 
-// Hardware RNG for Pico - Ring Oscillator
-static uint32_t get_hardware_random() {
-    uint32_t random = 0;
-    volatile uint32_t *rnd_reg = (uint32_t *)(ROSC_BASE + ROSC_RANDOMBIT_OFFSET);
-    
-    for (int i = 0; i < 32; i++) {
-        random <<= 1;
-        random |= (*rnd_reg) & 1;
-    }
-    
-    return random;
-}
-
+// Key-generation entropy. Previously read the RP2040 ring oscillator's
+// "random bit" register directly, 32 times, with no whitening/debiasing --
+// the Pico SDK's own documentation flags raw ROSC-bit sampling as having
+// high auto-correlation when sampled this way (exactly this pattern).
+// pico_rand's get_rand_32()/get_rand_64() (pico/rand.h) mix ROSC with the
+// microsecond timer and a bus performance counter through a seeded 128-bit
+// PRNG state, and are already part of the pico-sdk this build already links
+// against -- no new dependency. Safe to call from any core/IRQ context per
+// its own documented contract (may block a few microseconds on entropy).
 void wireguard_random_bytes(void *bytes, size_t size) {
     uint8_t *p = (uint8_t *)bytes;
-    uint32_t r;
-    
-    while (size >= 4) {
-        r = get_hardware_random();
+
+    while (size >= 8) {
+        uint64_t r = get_rand_64();
+        memcpy(p, &r, 8);
+        p += 8;
+        size -= 8;
+    }
+
+    if (size >= 4) {
+        uint32_t r = get_rand_32();
         memcpy(p, &r, 4);
         p += 4;
         size -= 4;
     }
-    
+
     if (size > 0) {
-        r = get_hardware_random();
+        uint32_t r = get_rand_32();
         memcpy(p, &r, size);
     }
 }
@@ -80,6 +81,38 @@ void wireguard_tai64n_now(uint8_t *output) {
   U32TO8_BIG(output + 8, nanos);
 }
 
+// ── DoS load heuristic ───────────────────────────────────────────────────
+// Tracks handshake-initiation/response attempts (mac1-shaped packets,
+// counted by wireguardif.c at the point the message type is recognized --
+// before any expensive DH/AEAD work runs) in a sliding window. This
+// activates the library's own mac2/cookie challenge once the rate exceeds
+// WIREGUARD_LOAD_THRESHOLD attempts per WIREGUARD_LOAD_WINDOW_MS --
+// previously wireguard_is_under_load() unconditionally returned false, so
+// that mechanism was permanently dead code regardless of real traffic.
+// Threshold picked well above normal operation (this port's own periodic
+// re-handshake cadence is minutes, not seconds) but well below what would
+// let a flood keep this platform's ~280-300ms-per-handshake compute cost
+// saturated indefinitely.
+#define WIREGUARD_LOAD_WINDOW_MS 1000u
+#define WIREGUARD_LOAD_THRESHOLD 4u
+
+static uint32_t load_window_start_ms = 0;
+static uint32_t load_window_count = 0;
+
+void wireguard_platform_note_handshake_attempt() {
+  uint32_t now = wireguard_sys_now();
+  if ((uint32_t)(now - load_window_start_ms) >= WIREGUARD_LOAD_WINDOW_MS) {
+    load_window_start_ms = now;
+    load_window_count = 0;
+  }
+  load_window_count++;
+}
+
 bool wireguard_is_under_load() {
-  return false;
+  uint32_t now = wireguard_sys_now();
+  if ((uint32_t)(now - load_window_start_ms) >= WIREGUARD_LOAD_WINDOW_MS) {
+    // Window has aged out with no attempt recorded since -- not under load.
+    return false;
+  }
+  return load_window_count > WIREGUARD_LOAD_THRESHOLD;
 }

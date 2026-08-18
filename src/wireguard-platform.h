@@ -77,6 +77,12 @@ void wireguard_tai64n_now(uint8_t *output);
 // Is the system under load - i.e. should we generate cookie reply message in response to initiation messages
 bool wireguard_is_under_load();
 
+// Called once per received handshake-initiation or handshake-response
+// message (mac1-shaped, before any expensive DH/AEAD work runs) so
+// wireguard_is_under_load() can track a real attempt rate instead of being
+// permanently hardcoded false. See wireguard-platform.c for the heuristic.
+void wireguard_platform_note_handshake_attempt();
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

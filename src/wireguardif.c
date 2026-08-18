@@ -381,9 +381,18 @@ static void wireguardif_process_data_message(struct wireguard_device *device, st
 #endif /* LWIP_IPV4 */
 #if LWIP_IPV6
 							if (IPH_V(iphdr) == 6) {
-								// TODO: IPV6 support for route filtering
+								// TODO: IPV6 support for route filtering -- the
+								// IPv4 branch above enforces cryptokey routing
+								// (peer->allowed_source_ips) before accepting a
+								// decrypted inner packet; until the equivalent
+								// check exists here, fail closed (drop) rather
+								// than unconditionally accept every IPv6 inner
+								// packet regardless of the peer's allowed IPs.
+								// Inert in this project's own build (LWIP_IPV6=0
+								// here), but a real gap for the day IPv6 is
+								// enabled without this TODO being remembered.
 								header_len = PP_NTOHS(IPH_LEN(iphdr));
-								dest_ok = true;
+								dest_ok = false;
 							}
 #endif /* LWIP_IPV6 */
 							if (header_len <= pbuf->tot_len) {
@@ -528,6 +537,13 @@ static bool wireguardif_check_initiation_message(struct wireguard_device *device
 	size_t source_len;
 	// We received an initiation packet check it is valid
 
+	// Counted here, before the mac1 check below, so wireguard_is_under_load()
+	// reflects the rate of handshake-shaped packets actually arriving --
+	// mac1 checking itself is cheap; what's expensive (DH/AEAD in
+	// wireguard_process_initiation_message()) only runs once this function
+	// returns true, which is exactly the path this load heuristic gates.
+	wireguard_platform_note_handshake_attempt();
+
 	if (wireguard_check_mac1(device, data, sizeof(struct message_handshake_initiation) - (2 * WIREGUARD_COOKIE_LEN), msg->mac1)) {
 		// mac1 is valid!
 		if (!wireguard_is_under_load()) {
@@ -559,6 +575,8 @@ static bool wireguardif_check_response_message(struct wireguard_device *device, 
 	uint8_t source_buf[18];
 	size_t source_len;
 	// We received an initiation packet check it is valid
+
+	wireguard_platform_note_handshake_attempt();  // see the identical comment in wireguardif_check_initiation_message()
 
 	if (wireguard_check_mac1(device, data, sizeof(struct message_handshake_response) - (2 * WIREGUARD_COOKIE_LEN), msg->mac1)) {
 		// mac1 is valid!
@@ -612,10 +630,30 @@ void wireguardif_network_rx(void *arg, struct udp_pcb *pcb, struct pbuf *p, cons
 			return;
 	}
 
-	// Log first bytes
 	uint8_t *data = (uint8_t *)p->payload;
-	size_t len = p->len; // This buf, not chained ones
-	log_d(TAG "RX packet type: 0x%02X", data[0]);
+	size_t len = p->len; // bytes actually contiguous at `data` -- see chained-pbuf guard below
+
+	if (p->tot_len != p->len) {
+		// This datagram arrived as a chained pbuf -- p->payload only covers
+		// the first link's own memory (chained pbufs are separate,
+		// non-contiguous allocations linked via ->next), so p->len is the
+		// most this function can safely read through `data` at all. Using
+		// p->tot_len (the full chained length) here instead, without also
+		// reassembling the chain first, would read past the first link into
+		// unrelated memory -- worse than the truncation this replaces.
+		// Confirmed not reachable in this project's own build (pbuf pool
+		// buffers default larger than WIREGUARDIF_MTU, so a max-size
+		// WireGuard packet never actually chains here) -- but drop cleanly
+		// rather than truncate-and-misparse or read out of bounds if that
+		// ever changes.
+		log_d(TAG "RX: chained pbuf (tot_len=%d != len=%d) -- dropping, unsupported", p->tot_len, p->len);
+		pbuf_free(p);
+		return;
+	}
+
+	if (len > 0) {
+		log_d(TAG "RX packet type: 0x%02X", data[0]);
+	}
 
 	uint8_t type = wireguard_get_message_type(data, len);
 	ESP_LOGV(TAG, "network_rx: %08x:%d", WG_IP4_U32(addr), port);
@@ -1178,6 +1216,12 @@ err_t wireguardif_init(struct netif *netif) {
 		log_e(TAG "netif or state is NULL: netif=%p, netif.state:%p", netif, netif ? netif->state : NULL);
 		result = ERR_ARG;
 	}
+	// Decoded static private key is only needed transiently, to hand to
+	// wireguard_device_init() (which copies whatever it needs into the
+	// device context) -- left on the stack otherwise, unlike every other
+	// ephemeral/session key buffer in wireguard.c, which all get zeroed via
+	// crypto_zero() after use. Covers every exit path above, success or not.
+	crypto_zero(private_key, sizeof(private_key));
 	return result;
 }
 
