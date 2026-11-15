@@ -109,6 +109,16 @@ bool WireGuard::beginAdvanced(const IPAddress &localIP,
         log_e(TAG "Failed to resolve endpoint '%s'", remotePeerAddress);
         return false;
     }
+    // wireguardif_connect() (below) refuses an endpoint of 0.0.0.0 or a port
+    // of 0 with ERR_ARG and leaves the peer inactive: no handshake is ever
+    // sent, yet begin() used to report success. Refuse here instead, before
+    // anything is allocated, so the caller sees a failure it can log.
+    if (ip4_addr_isany_val(endpoint4) || remotePeerPort == 0) {
+        log_e(TAG "Endpoint %u.%u.%u.%u:%u can't be connected to (address 0.0.0.0 or port 0)",
+              ip4_addr1(&endpoint4), ip4_addr2(&endpoint4), ip4_addr3(&endpoint4),
+              ip4_addr4(&endpoint4), (unsigned)remotePeerPort);
+        return false;
+    }
 
     // Prepare interface addresses.
     ip4_addr_t ipaddr;
@@ -232,7 +242,12 @@ bool WireGuard::beginAdvanced(const IPAddress &localIP,
 
     // Bring up WireGuard.
     netif_set_up(wg_netif);
-    wireguardif_connect(wg_netif, peer_index);
+    // Its only other failure, an unknown peer_index, can't follow a
+    // successful add_peer; logged in case that ever changes.
+    err_t cerr = wireguardif_connect(wg_netif, peer_index);
+    if (cerr != ERR_OK) {
+        log_e(TAG "wireguardif_connect() failed err=%d -- no handshake will be sent", (int)cerr);
+    }
 
     log_d(TAG "connected!...");
 
