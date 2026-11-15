@@ -8,6 +8,8 @@
 #include <Arduino.h>
 #include <IPAddress.h>
 
+struct netif;
+
 class WireGuard {
 private:
     bool _is_initialized = false;
@@ -47,12 +49,31 @@ public:
     bool is_initialized() const { return this->_is_initialized; }
 
     /*
-     * Returns true when the peer has a valid session key (i.e., handshake completed at least once).
+     * Returns true while the peer holds a usable session keypair: one from a
+     * handshake completed within the last REJECT_AFTER_TIME (180 s). It goes
+     * false during an outage once the newest keypair is that old, so a caller
+     * polling it notices a dead tunnel within about 180 s of the last
+     * completed handshake.
      */
     bool peerUp(IPAddress* currentEndpointIp = nullptr, uint16_t* currentEndpointPort = nullptr) const;
 
     /*
-     * Sends a tiny UDP probe via WG to trigger handshake (non-blocking). Rate-limited.
+     * Sends a 1-byte UDP datagram to probeIp:probePort. Despite the name it
+     * can't start a handshake: before one completes the wg netif's link is
+     * down, so the datagram never enters the tunnel, and
+     * wireguardif_output_to_peer() with no keypair doesn't initiate anyway.
+     * The library's own timer (wireguardif_tmr) drives handshakes. Kept for
+     * API compatibility; MezMirage no longer calls it. Rate-limited.
      */
     bool kickHandshake(const IPAddress& probeIp, uint16_t probePort, uint32_t minIntervalMs = 250);
+
+    /*
+     * The tunnel's lwIP netif. Its address never changes (one static
+     * instance, re-added by every begin()), so a UDP receive callback can
+     * compare ip_current_input_netif() against it, without a lock, to accept
+     * only packets that came out of the tunnel: decrypted packets enter lwIP
+     * through ip_input() on this netif, while a packet that merely carries a
+     * tunnel source address arrives on the WiFi netif.
+     */
+    static const struct netif* tunnelNetif();
 };

@@ -34,6 +34,8 @@ static struct netif *wg_netif = &wg_netif_instance;
 static struct netif *previous_default_netif = nullptr;
 static uint8_t peer_index = WIREGUARDIF_INVALID_INDEX;
 
+const struct netif* WireGuard::tunnelNetif() { return &wg_netif_instance; }
+
 // Undoes netif_add(wg_netif): wireguardif_init() (run by netif_add()) starts
 // wireguardif_tmr and allocates a UDP PCB and the device, none of which
 // netif_remove() frees -- only wireguardif_shutdown() does, finding the

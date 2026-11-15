@@ -1069,6 +1069,20 @@ static void wireguardif_tmr(void *arg) {
 				// Destroy current keypair
 				keypair_destroy(&peer->curr_keypair);
 			}
+			// prev_keypair is always older than curr_keypair (it is the old curr,
+			// or an old next a newer curr replaced), but only a packet from the
+			// server ever cleared it (a handshake, or an accepted server
+			// initiation in add_new_keypair's responder branch). So after a
+			// device-initiated rekey, an outage in which nothing from the server
+			// reached the device (WiFi lost, an uplink or the server down) left a
+			// valid prev behind: wireguardif_peer_is_up() kept reporting the peer
+			// up, and the caller never noticed the outage, long after curr
+			// expired. No keypair is usable past REJECT_AFTER_TIME (sending and
+			// receiving both refuse one), so destroying prev at that age loses
+			// nothing.
+			if (peer->prev_keypair.valid && wireguard_expired(peer->prev_keypair.keypair_millis, REJECT_AFTER_TIME)) {
+				keypair_destroy(&peer->prev_keypair);
+			}
 			if (should_send_keepalive(peer)) {
 				wireguardif_send_keepalive(device, peer);
 			}

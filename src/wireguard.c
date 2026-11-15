@@ -484,17 +484,19 @@ void keypair_update(struct wireguard_peer *peer, struct wireguard_keypair *recei
 	}
 }
 
-static void add_new_keypair(struct wireguard_peer *peer, struct wireguard_keypair new_keypair) {
-	if (new_keypair.initiator) {
+// Takes a pointer, not the struct by value: a by-value copy is one more stack
+// frame holding the live session keys (see wireguard_start_session()).
+static void add_new_keypair(struct wireguard_peer *peer, const struct wireguard_keypair *new_keypair) {
+	if (new_keypair->initiator) {
 		if (peer->next_keypair.valid) {
 			peer->prev_keypair = peer->next_keypair;
 			keypair_destroy(&peer->next_keypair);
 		} else  {
 			peer->prev_keypair = peer->curr_keypair;
 		}
-		peer->curr_keypair = new_keypair;
+		peer->curr_keypair = *new_keypair;
 	} else {
-		peer->next_keypair =  new_keypair;
+		peer->next_keypair = *new_keypair;
 		keypair_destroy(&peer->prev_keypair);
 	}
 }
@@ -537,7 +539,12 @@ void wireguard_start_session(struct wireguard_peer *peer, bool initiator) {
 	handshake->local_index = 0;
 	handshake->valid = false;
 
-	add_new_keypair(peer, new_keypair);
+	add_new_keypair(peer, &new_keypair);
+	// The peer now holds its own copy; wipe this frame's. That removes one
+	// copy only: wireguard_hmac() (k_ipad/k_opad/ctx under the KDF key),
+	// blake2s_final() and chacha20poly1305_decrypt() still leave key material
+	// in dead stack below this frame (the encrypt side already wipes its own).
+	crypto_zero(&new_keypair, sizeof(new_keypair));
 }
 
 uint8_t wireguard_get_message_type(const uint8_t *data, size_t len) {
