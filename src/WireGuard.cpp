@@ -6,6 +6,7 @@
 #include "arduino-wireguard-pico-w.h"
 
 #include <WiFi.h>
+#include <lwip_wrap.h>  // LWIPMutex: arduino-pico's lwIP lock (see WireGuard::end())
 
 #include <lwip/udp.h>
 #include <lwip/netif.h>
@@ -24,6 +25,7 @@
 // mangled symbol that only ever exists unmangled.
 extern "C" {
 #include "wireguard.h"  // wireguard_base64_decode(), WIREGUARD_SESSION_KEY_LEN
+#include "crypto.h"     // crypto_zero(); no extern "C" guard either
 }
 
 // ---- Globals kept for backward-compat with the original library API ----
@@ -31,6 +33,19 @@ static struct netif wg_netif_instance;
 static struct netif *wg_netif = &wg_netif_instance;
 static struct netif *previous_default_netif = nullptr;
 static uint8_t peer_index = WIREGUARDIF_INVALID_INDEX;
+
+// Undoes netif_add(wg_netif): wireguardif_init() (run by netif_add()) starts
+// wireguardif_tmr and allocates a UDP PCB and the device, none of which
+// netif_remove() frees -- only wireguardif_shutdown() does, finding the
+// device through wg_netif->state and then clearing it. Shutdown runs first,
+// the order end() has always used. (The order would matter only for TCP over
+// the tunnel: netif_remove() aborts TCP PCBs bound to the tunnel address, and
+// the RST goes out through wireguardif_output(), which needs state. Nothing
+// here uses TCP.) Caller holds the lwIP lock (see WireGuard::end()).
+static void release_wg_netif() {
+    wireguardif_shutdown(wg_netif);
+    netif_remove(wg_netif);
+}
 
 static bool resolve_ipv4(const char *host_or_ip, ip4_addr_t *out) {
     if (host_or_ip == nullptr || out == nullptr) {
@@ -190,12 +205,26 @@ bool WireGuard::beginAdvanced(const IPAddress &localIP,
     // Confirmed 2026-08-11: an overnight soak run against a real cloud
     // server saw 1% tunnel uptime with the one successful session lasting
     // ~133s total; explicitly opting into the library's own default here
-    // is the fix, see project_wireguard_soak_crash_investigation memory.
+    // is the fix.
     peer.keep_alive = WIREGUARDIF_KEEPALIVE_DEFAULT;
 
     err_t perr = wireguardif_add_peer(wg_netif, &peer, &peer_index);
+    // add_peer copied the PSK (wireguard_peer_init's memcpy) or failed; either
+    // way the decoded copy on this stack is done with.
+    crypto_zero(presharedKeyBytes, sizeof(presharedKeyBytes));
     if (perr != ERR_OK) {
         log_e(TAG "wireguardif_add_peer() failed err=%d", (int)perr);
+        // netif_add() above already listed wg_netif and started its timer.
+        // _is_initialized stays false, so end() would skip it, and the next
+        // begin() would netif_add() the still-listed netif again: lwIP's
+        // LWIP_ASSERT("netif already added") -> panic("lwip"), a watchdog
+        // reboot on every retry. add_peer fails with ERR_ARG for a server
+        // public key that isn't 32 bytes of base64, which wgServerKey saves
+        // with only a warning. The netif isn't up or default yet, so
+        // releasing it is all there is to undo.
+        LWIPMutex lock;
+        release_wg_netif();
+        peer_index = WIREGUARDIF_INVALID_INDEX;
         return false;
     }
 
@@ -229,21 +258,33 @@ void WireGuard::end() {
         return;
     }
 
-    wireguardif_remove_peer(wg_netif, peer_index);
-    // wireguardif_init() (called from netif_add() in beginAdvanced()) allocates
-    // a UDP PCB and a wireguard_device via udp_new()/mem_calloc(). Neither
-    // netif_remove() nor wireguardif_remove_peer() frees them -- only
-    // wireguardif_shutdown() does (udp_disconnect()+udp_remove()+free(device)).
-    // Without this call, every begin()/end() cycle leaks one UDP PCB; once
-    // lwIP's UDP PCB pool is exhausted, every future udp_new() inside
-    // wireguardif_init() returns NULL, netif_add() fails, and begin() fails
-    // permanently for the rest of the process's uptime. Must run before
-    // netif_remove() while wg_netif->state still points at the device.
-    wireguardif_shutdown(wg_netif);
-    netif_remove(wg_netif);
+    {
+        // The whole teardown runs under the lwIP lock. wireguardif_tmr() and
+        // wireguardif_network_rx() run in lwIP's own context, which on this
+        // port is an IRQ that can interrupt this thread, and they read the
+        // peer and device freed here. arduino-pico wraps netif_remove(),
+        // udp_remove() and udp_disconnect() in this lock, but not
+        // sys_untimeout() (which unlinks from the list sys_check_timeouts()
+        // walks), mem_free() (lwIP's heap, which IRQ-side pbuf allocations
+        // share; NO_SYS makes lwIP's own heap protection a no-op),
+        // netif_set_default(), or the peer zeroing in remove_peer. Nothing
+        // here does crypto, so the IRQ waits only briefly; the lock is
+        // recursive, so the wrapped calls inside nest.
+        LWIPMutex lock;
+        wireguardif_remove_peer(wg_netif, peer_index);
+        // wireguardif_init() (called from netif_add() in beginAdvanced())
+        // allocates a UDP PCB and a wireguard_device via
+        // udp_new()/mem_calloc(). Neither netif_remove() nor
+        // wireguardif_remove_peer() frees them -- only wireguardif_shutdown()
+        // does. Without it, every begin()/end() cycle leaked one UDP PCB; once
+        // lwIP's pool was exhausted, every later udp_new() inside
+        // wireguardif_init() returned NULL and begin() failed for the rest of
+        // the uptime.
+        release_wg_netif();
 
-    if (previous_default_netif != nullptr) {
-        netif_set_default(previous_default_netif);
+        if (previous_default_netif != nullptr) {
+            netif_set_default(previous_default_netif);
+        }
     }
 
     _is_initialized = false;

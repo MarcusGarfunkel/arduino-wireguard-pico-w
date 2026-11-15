@@ -1110,7 +1110,11 @@ void wireguardif_shutdown(struct netif *netif) {
 	// this port) -- must be freed with mem_free(), not libc free(), or the
 	// arena allocation is never actually returned. wireguardif_init()'s own
 	// error paths already use mem_free() for this same allocation; this was
-	// just an inconsistency in this specific function.
+	// just an inconsistency in this specific function. Zeroed first: the
+	// device holds the decoded static private key, the cookie secret and the
+	// peer slot (whose PSK survives a wireguard_peer_init() that failed after
+	// copying it), and lwIP's heap is reused for pbufs.
+	crypto_zero(device, sizeof(struct wireguard_device));
 	mem_free(device);
 	netif->state = NULL;
 }

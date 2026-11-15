@@ -30,12 +30,13 @@ static LogLevel wgLevelFromChar(const char *lvl) {
   }
 }
 
-// Log function used by macros. Routed through this project's LogModule
-// (COM4 + level-gated) instead of raw Serial (native USB-CDC, unconditional,
-// no level gating) -- see project_wireguard_stage1_verification memory for
-// why: this was the only reason the two reconnect-loop leak bugs found
-// earlier this session were ever visible at all, via a live debugger, since
-// nothing in this project's normal workflow has native USB-CDC attached.
+// Log function used by macros. Routed through the host project's LogModule
+// instead of raw Serial: LogModule applies its level gating and reaches
+// every log sink (USB console, UART, SD card, the remote WARN+ forwarder).
+// Raw Serial reached the USB console only, ungated, so the library's own
+// diagnostics -- including the two reconnect-loop leaks in WireGuard::end()
+// that were first found with a live debugger -- were missing from the logs
+// that are actually kept.
 void wg_logf_(const char *lvl, const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
